@@ -29,40 +29,50 @@ def login():
         return False
     return True
 
-# --- TRADUCCIONES ---
-DIAS_ES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
+# --- TRADUCCIONES Y FORMATOS ---
+DIAS_ES = ["Lun", "Mar", "Mie", "Jue", "Vie", "Sab", "Dom"]
 MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 
-# --- FUNCIÓN PDF CORREGIDA ---
+# --- FUNCIÓN PDF CORREGIDA (SIN CARACTERES ESPECIALES) ---
 def crear_pdf(df_final, mes_nombre, anio):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(190, 10, f"CRONOGRAMA DE TURNOS - {mes_nombre.upper()} {anio}", ln=True, align="C")
+    
+    # Título (Normalizado para evitar errores de codificación)
+    titulo = f"CRONOGRAMA DE TURNOS - {mes_nombre.upper()} {anio}"
+    pdf.cell(190, 10, titulo.encode('latin-1', 'replace').decode('latin-1'), ln=True, align="C")
     pdf.ln(10)
     
-    # Encabezados
+    # Encabezados de Tabla
     pdf.set_font("Arial", "B", 10)
-    pdf.set_fill_color(0, 51, 102)
+    pdf.set_fill_color(0, 51, 102) # Azul oscuro
     pdf.set_text_color(255, 255, 255)
     pdf.cell(50, 10, "FECHA", border=1, align="C", fill=True)
     pdf.cell(70, 10, "MANANA (06-15)", border=1, align="C", fill=True)
     pdf.cell(70, 10, "TARDE (15-24)", border=1, align="C", fill=True)
     pdf.ln()
     
-    # Datos
+    # Contenido de la Tabla
     pdf.set_font("Arial", "", 9)
     pdf.set_text_color(0, 0, 0)
     fill = False
+    
     for _, row in df_final.iterrows():
         pdf.set_fill_color(240, 240, 240)
-        # Usamos .iloc o nombres directos asegurados por el reset_index
-        pdf.cell(50, 8, str(row[0]), border=1, align="C", fill=fill)
-        pdf.cell(70, 8, str(row[1]), border=1, align="C", fill=fill)
-        pdf.cell(70, 8, str(row[2]), border=1, align="C", fill=fill)
+        
+        # Limpieza de cada celda para asegurar compatibilidad PDF
+        fecha_txt = str(row[0]).encode('latin-1', 'replace').decode('latin-1')
+        manana_txt = str(row[1]).replace("⚠️ ", "").encode('latin-1', 'replace').decode('latin-1')
+        tarde_txt = str(row[2]).replace("⚠️ ", "").encode('latin-1', 'replace').decode('latin-1')
+        
+        pdf.cell(50, 8, fecha_txt, border=1, align="C", fill=fill)
+        pdf.cell(70, 8, manana_txt, border=1, align="C", fill=fill)
+        pdf.cell(70, 8, tarde_txt, border=1, align="C", fill=fill)
         pdf.ln()
         fill = not fill
-    return pdf.output(dest='S').encode('latin-1')
+        
+    return pdf.output(dest='S').encode('latin-1', 'ignore')
 
 # --- APLICACIÓN PRINCIPAL ---
 if login():
@@ -77,13 +87,18 @@ if login():
     for e in empleados:
         with st.sidebar.expander(f"Restricciones {e}"):
             rango = st.date_input(f"Licencia {e}", value=[], key=f"l_{e}")
-            dias_p = st.multiselect(f"Días NO {e}", ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"], key=f"s_{e}")
-            t_ev = st.selectbox(f"Evitar {e}", ["Ninguno", "Mañana (06-15)", "Tarde (15-24)"], key=f"t_{e}")
-            f_fijos = st.multiselect(f"Francos {e}", range(1, 32), key=f"f_{e}")
+            dias_p = st.multiselect(f"No trabaja los días:", ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"], key=f"s_{e}")
+            t_ev = st.selectbox(f"Evitar turno:", ["Ninguno", "Mañana (06-15)", "Tarde (15-24)"], key=f"t_{e}")
+            f_fijos = st.multiselect(f"Francos fijos (nro día):", range(1, 32), key=f"f_{e}")
 
             fechas_l = pd.date_range(start=rango[0], end=rango[1]).date if len(rango) == 2 else []
             map_d = {"Lunes":0, "Martes":1, "Miércoles":2, "Jueves":3, "Viernes":4, "Sábado":5, "Domingo":6}
-            config_per[e] = {"lic": fechas_l, "sem": [map_d[d] for d in dias_p], "t_bloq": t_ev, "f_fijos": f_fijos}
+            config_per[e] = {
+                "lic": fechas_l, 
+                "sem": [map_d[d] for d in dias_p], 
+                "t_bloq": t_ev, 
+                "f_fijos": f_fijos
+            }
 
     if st.button("🚀 GENERAR PLANILLA"):
         num_dias = calendar.monthrange(anio, mes_nro)[1]
@@ -95,44 +110,60 @@ if login():
             f_dt = datetime(anio, mes_nro, d)
             idx_s = f_dt.weekday()
             hs_v = 18 if idx_s >= 5 else 9
+            # Formato DD/MM/AAAA
             f_str = f"{DIAS_ES[idx_s]} {f_dt.strftime('%d/%m/%Y')}"
             
-            hoy = []
+            hoy_asignados = []
             for t in ["Mañana (06-15)", "Tarde (15-24)"]:
                 cand = []
                 for e in empleados:
-                    if (f_dt.date() not in config_per[e]["lic"] and 
-                        idx_s not in config_per[e]["sem"] and 
-                        t != config_per[e]["t_bloq"] and 
-                        d not in config_per[e]["f_fijos"] and 
-                        not (t == "Mañana (06-15)" and e == tarde_ayer) and 
-                        hs_acum[e] + hs_v <= 160 and e not in hoy):
+                    # Validaciones
+                    en_licencia = f_dt.date() in config_per[e]["lic"]
+                    dia_semana_bloq = idx_s in config_per[e]["sem"]
+                    turno_bloq = t == config_per[e]["t_bloq"]
+                    dia_franco = d in config_per[e]["f_fijos"]
+                    descanso_ok = not (t == "Mañana (06-15)" and e == tarde_ayer)
+                    tope_hs = hs_acum[e] + hs_v <= 160
+                    
+                    if not any([en_licencia, dia_semana_bloq, turno_bloq, dia_franco]) and descanso_ok and tope_hs and e not in hoy_asignados:
                         cand.append(e)
                 
                 cand.sort(key=lambda x: hs_acum[x])
-                elegido = cand[0] if cand else "⚠️ VACANTE"
-                cronograma.append({"Fecha": f_str, "Turno": t, "Empleado": elegido})
-                if elegido != "⚠️ VACANTE":
+                
+                if cand:
+                    elegido = cand[0]
+                    cronograma.append({"Fecha": f_str, "Turno": t, "Empleado": elegido})
                     hs_acum[elegido] += hs_v
-                    hoy.append(elegido)
-                if t == "Tarde (15-24)": tarde_ayer = elegido if elegido != "⚠️ VACANTE" else None
+                    hoy_asignados.append(elegido)
+                    if t == "Tarde (15-24)": tarde_ayer = elegido
+                else:
+                    cronograma.append({"Fecha": f_str, "Turno": t, "Empleado": "[VACANTE]"})
+                    if t == "Tarde (15-24)": tarde_ayer = None
 
         df = pd.DataFrame(cronograma)
         df_cal = df.pivot(index='Fecha', columns='Turno', values='Empleado').reset_index()
         
-        # Reordenar para que sea cronológico
-        df_cal['temp_orden'] = range(len(df_cal))
-        st.table(df_cal.drop(columns='temp_orden'))
+        # Mostrar tabla en la web
+        st.subheader(f"Vista Previa: {mes_nombre}")
+        st.table(df_cal)
 
-        # Generar PDF
+        # Botones de descarga
         try:
-            pdf_bytes = crear_pdf(df_cal.drop(columns='temp_orden'), mes_nombre, anio)
-            st.download_button("📥 Descargar PDF", data=pdf_bytes, file_name=f"Turnos_{mes_nombre}.pdf", mime="application/pdf")
+            pdf_bytes = crear_pdf(df_cal, mes_nombre, anio)
+            st.download_button(
+                label="📥 Descargar Cronograma PDF", 
+                data=pdf_bytes, 
+                file_name=f"Turnos_{mes_nombre}_{anio}.pdf", 
+                mime="application/pdf"
+            )
         except Exception as e:
-            st.error(f"Error al generar PDF: {e}")
+            st.error(f"Error técnico al generar el PDF: {e}")
 
-        # Métricas
+        # Resumen de métricas
         st.divider()
-        c = st.columns(4)
+        st.subheader("📊 Control de Horas (Límite 160hs)")
+        col_m = st.columns(4)
         for i, e in enumerate(empleados):
-            c[i].metric(e, f"{hs_acum[e]} hs")
+            h = hs_acum[e]
+            col_m[i].metric(e, f"{h} hs", f"{160-h} disp.")
+            col_m[i].progress(min(h/160, 1.0))
