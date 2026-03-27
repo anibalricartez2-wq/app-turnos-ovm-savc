@@ -81,27 +81,4 @@ if login():
     for e in empleados:
         with st.sidebar.expander(f"Restricciones {e}"):
             rango = st.date_input(f"Licencia Médica {e}", value=[], key=f"l_{e}")
-            f_fijos = st.multiselect(f"Francos fijos (Nro Día):", range(1, 32), key=f"f_{e}")
-            
-            st.write("**Bloquear Turnos Específicos:**")
-            restricciones_esp = []
-            cols_r = st.columns(2)
-            for i, d_nom in enumerate(DIAS_ES):
-                # Usamos columnas alternadas para que no ocupe tanto espacio vertical
-                target_col = cols_r[0] if i < 4 else cols_r[1]
-                if target_col.checkbox(f"{d_nom} Mañana", key=f"rm_{e}_{d_nom}"):
-                    restricciones_esp.append((d_nom, TURNOS[0]))
-                if target_col.checkbox(f"{d_nom} Tarde", key=f"rt_{e}_{d_nom}"):
-                    restricciones_esp.append((d_nom, TURNOS[1]))
-
-            fechas_l = []
-            if isinstance(rango, (list, tuple)) and len(rango) == 2:
-                fechas_l = pd.date_range(start=rango[0], end=rango[1]).date
-            
-            config_per[e] = {
-                "lic": fechas_l, 
-                "f_fijos": f_fijos,
-                "bloqueos": restricciones_esp
-            }
-
-    if st.button("🚀 GENERAR PLANILLA BALANCEADA
+            f_fijos = st.multiselect(f"Francos fijos (Nro Día):", range(1, 32), key=f"f
