@@ -6,7 +6,7 @@ from datetime import datetime
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Sistema Control de Turnos", layout="wide")
 
-# Diccionarios de traducción manual para evitar errores de servidor
+# Diccionarios de traducción manual
 DIAS_ES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 MESES_ES = [
     "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -19,7 +19,7 @@ def check_password():
         st.text_input("Usuario", on_change=password_entered, key="username")
         st.text_input("Contraseña", type="password", on_change=password_entered, key="password")
         return False
-    return st.session_state.get("password_correct", True)
+    return st.session_state.get("password_correct", False)
 
 def password_entered():
     if (st.session_state["username"] in st.secrets["passwords"] and 
@@ -34,7 +34,6 @@ if check_password():
     # --- SIDEBAR: CONFIGURACIÓN ---
     with st.sidebar:
         st.header("⚙️ Configuración")
-        # Selector de mes en español
         mes_nombre = st.selectbox("Seleccionar Mes", MESES_ES, index=datetime.now().month - 1)
         mes_nro = MESES_ES.index(mes_nombre) + 1
         anio = st.number_input("Año", value=2026)
@@ -80,7 +79,7 @@ if check_password():
             es_finde = idx_sem >= 5
             hs_valor = 18 if es_finde else 9
             
-            # Formato solicitado: DD/MM/AAAA y Día en Español
+            # Formato: DD/MM/AAAA y Día en Español
             fecha_str = f"{DIAS_ES[idx_sem]} {fecha_dt.strftime('%d/%m/%Y')}"
             
             turnos = ["Mañana (06-15)", "Tarde (15-24)"]
@@ -89,8 +88,43 @@ if check_password():
             for t in turnos:
                 candidatos = []
                 for e in empleados:
+                    # Validaciones de restricciones
                     lic = fecha_dt.date() in config_per[e]["licencia"]
                     dia_sem = idx_sem in config_per[e]["dias_semana"]
                     turno_off = t == config_per[e]["turno_bloqueado"]
                     franco = dia_nro in config_per[e]["francos_fijos"]
-                    descanso = not (t == "Mañana (06-15)" and e == quien_hizo_tarde_ayer
+                    descanso = not (t == "Mañana (06-15)" and e == quien_hizo_tarde_ayer)
+                    horas_ok = (horas_acum[e] + hs_valor) <= 160
+                    ya_asignado = e in asignados_hoy
+                    
+                    if not any([lic, dia_sem, turno_off, franco]) and descanso and horas_ok and not ya_asignado:
+                        candidatos.append(e)
+
+                # Priorizar por menos horas
+                candidatos.sort(key=lambda x: horas_acum[x])
+
+                if candidatos:
+                    elegido = candidatos[0]
+                    cronograma.append({
+                        "Fecha": fecha_str,
+                        "Turno": t,
+                        "Empleado": elegido,
+                        "Hs": hs_valor
+                    })
+                    horas_acum[elegido] += hs_valor
+                    asignados_hoy.append(elegido)
+                    if t == "Tarde (15-24)": 
+                        quien_hizo_tarde_ayer = elegido
+                else:
+                    cronograma.append({
+                        "Fecha": fecha_str,
+                        "Turno": t,
+                        "Empleado": "⚠️ VACANTE",
+                        "Hs": 0
+                    })
+                    if t == "Tarde (15-24)": 
+                        quien_hizo_tarde_ayer = None
+
+        # --- RESULTADOS ---
+        if cronograma:
+            df = pd.DataFrame(cronograma
