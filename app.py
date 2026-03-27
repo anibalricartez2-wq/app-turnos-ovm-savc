@@ -2,68 +2,66 @@ import streamlit as st
 import pandas as pd
 import calendar
 from datetime import datetime
-from fpdf import FPDF # Librería para el PDF
-import plotly.graph_objects as go
+from fpdf import FPDF
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Sistema Control de Turnos", layout="wide")
+st.set_page_config(page_title="Control de Turnos SAVC", layout="wide")
 
+# --- FUNCIÓN DE LOGIN CORREGIDA ---
+def login():
+    if "autenticado" not in st.session_state:
+        st.session_state["autenticado"] = False
+
+    if not st.session_state["autenticado"]:
+        st.title("🔐 Acceso al Sistema de Turnos")
+        user = st.text_input("Usuario")
+        password = st.text_input("Contraseña", type="password")
+        
+        if st.button("Ingresar"):
+            # Verifica que existan los secrets
+            if "passwords" in st.secrets:
+                if user in st.secrets["passwords"] and password == st.secrets["passwords"][user]:
+                    st.session_state["autenticado"] = True
+                    st.rerun()
+                else:
+                    st.error("Usuario o contraseña incorrectos")
+            else:
+                st.error("Error: No se configuraron los 'Secrets' en Streamlit Cloud")
+        return False
+    return True
+
+# --- TRADUCCIONES ---
 DIAS_ES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 
-# --- FUNCIÓN PARA CREAR EL PDF ---
+# --- FUNCIÓN PDF ---
 def crear_pdf(df_cal, mes_nombre, anio):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
-    
-    # Título
     pdf.cell(190, 10, f"CRONOGRAMA DE TURNOS - {mes_nombre.upper()} {anio}", ln=True, align="C")
     pdf.ln(10)
-    
-    # Encabezados de tabla
     pdf.set_font("Arial", "B", 10)
-    pdf.set_fill_color(0, 51, 102) # Azul oscuro
+    pdf.set_fill_color(0, 51, 102)
     pdf.set_text_color(255, 255, 255)
-    
     pdf.cell(50, 10, "FECHA", border=1, align="C", fill=True)
     pdf.cell(70, 10, "MANANA (06-15)", border=1, align="C", fill=True)
     pdf.cell(70, 10, "TARDE (15-24)", border=1, align="C", fill=True)
     pdf.ln()
-    
-    # Contenido de la tabla
     pdf.set_font("Arial", "", 9)
     pdf.set_text_color(0, 0, 0)
-    
-    # Alternar colores de filas
     fill = False
-    for index, row in df_cal.iterrows():
-        pdf.set_fill_color(240, 240, 240) if fill else pdf.set_fill_color(255, 255, 255)
+    for _, row in df_cal.iterrows():
+        pdf.set_fill_color(240, 240, 240)
         pdf.cell(50, 8, str(row['Fecha']), border=1, align="C", fill=fill)
         pdf.cell(70, 8, str(row['Mañana (06-15)']), border=1, align="C", fill=fill)
         pdf.cell(70, 8, str(row['Tarde (15-24)']), border=1, align="C", fill=fill)
         pdf.ln()
         fill = not fill
-        
     return pdf.output(dest='S').encode('latin-1')
 
-# --- LÓGICA DE LOGIN ---
-def check_password():
-    if "password_correct" not in st.session_state:
-        st.title("🔐 Acceso Restringido")
-        st.text_input("Usuario", on_change=password_entered, key="username")
-        st.text_input("Contraseña", type="password", on_change=password_entered, key="password")
-        return False
-    return st.session_state.get("password_correct", False)
-
-def password_entered():
-    if (st.session_state["username"] in st.secrets["passwords"] and 
-        st.session_state["password"] == st.secrets["passwords"][st.session_state["username"]]):
-        st.session_state["password_correct"] = True
-    else:
-        st.session_state["password_correct"] = False
-
-if check_password():
+# --- CUERPO PRINCIPAL ---
+if login():
     st.title("🗓️ Generador de Turnos - Operaciones")
     
     with st.sidebar:
@@ -90,6 +88,7 @@ if check_password():
                     "turno_bloqueado": turno_evitar, "francos_fijos": francos
                 }
 
+    # (Aquí sigue el resto de la lógica de generación que ya teníamos...)
     num_dias = calendar.monthrange(anio, mes_nro)[1]
     dias_mes = [datetime(anio, mes_nro, d) for d in range(1, num_dias + 1)]
 
@@ -139,32 +138,7 @@ if check_password():
             df_cal.index = pd.Categorical(df_cal.index, categories=df['Fecha'].unique(), ordered=True)
             df_cal = df_cal.sort_index().reset_index()
 
-            # --- VISTA PREVIA ---
-            st.subheader("📋 Vista Previa del Cronograma")
-            st.table(df_cal.style.applymap(lambda v: 'background-color: #ffcccc' if v == "⚠️ VACANTE" else ''))
-
-            # --- BOTONES DE DESCARGA ---
-            st.divider()
-            col_pdf, col_xls = st.columns(2)
+            st.table(df_cal)
             
-            with col_pdf:
-                # Generar PDF
-                pdf_data = crear_pdf(df_cal, mes_nombre, anio)
-                st.download_button(
-                    label="📥 Descargar PDF para Imprimir/Enviar",
-                    data=pdf_data,
-                    file_name=f"Cronograma_{mes_nombre}_{anio}.pdf",
-                    mime="application/pdf"
-                )
-            
-            with col_xls:
-                csv = df.to_csv(index=False).encode('utf-8-sig')
-                st.download_button("📊 Descargar Excel (Respaldo)", csv, f"turnos_{mes_nombre}.csv", "text/csv")
-
-            st.divider()
-            st.subheader("📊 Resumen de Horas")
-            cols = st.columns(4)
-            for i, e in enumerate(empleados):
-                h = horas_acum[e]
-                cols[i].metric(e, f"{h} hs", f"{160-h} libres")
-                cols[i].progress(min(h/160, 1.0))
+            pdf_data = crear_pdf(df_cal, mes_nombre, anio)
+            st.download_button("📥 Descargar PDF", data=pdf_data, file_name=f"Turnos_{mes_nombre}.pdf", mime="application/pdf")
