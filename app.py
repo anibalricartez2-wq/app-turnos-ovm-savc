@@ -71,18 +71,15 @@ if login():
             lic_in = st.date_input(f"Licencia {e}", value=[], key=f"l_{e}")
             ff = st.multiselect(f"Francos fijos:", range(1, 32), key=f"f_{e}")
             pref = st.radio("Turno:", ["Ambos", "Solo Mañana", "Solo Tarde"], key=f"p_{e}", horizontal=True)
-            
             bl = []
             c1, c2 = st.columns(2)
             for i, d_n in enumerate(DIAS_ES):
                 col = c1 if i < 4 else c2
                 if col.checkbox(f"{d_n} M", key=f"m_{e}_{d_n}"): bl.append((d_n, TURNOS[0]))
                 if col.checkbox(f"{d_n} T", key=f"t_{e}_{d_n}"): bl.append((d_n, TURNOS[1]))
-            
             fl = []
             if len(lic_in) == 2:
                 fl = pd.date_range(start=lic_in[0], end=lic_in[1]).date
-                
             cfg[e] = {"lic": fl, "fra": ff, "blo": bl, "pref": pref}
 
     if st.button("🚀 GENERAR PLANILLA"):
@@ -94,10 +91,8 @@ if login():
             f_dt = datetime(a_nro, m_nro, d)
             idx_s, n_dia = f_dt.weekday(), DIAS_ES[f_dt.weekday()]
             i_sem = f_dt.isocalendar()[1]
-            
             if i_sem != s_act:
-                h_s = {e: 0 for e in empleados}
-                s_act = i_sem
+                h_s, s_act = {e: 0 for e in empleados}, i_sem
             
             hs_v = 18 if idx_s >= 5 else 9
             f_str = f"{DIAS_ABR[idx_s]} {f_dt.strftime('%d/%m/%Y')}"
@@ -106,13 +101,10 @@ if login():
             for t in TURNOS:
                 cand = []
                 for e in empleados:
-                    es_lic = f_dt.date() in cfg[e]["lic"]
-                    es_fra = d in cfg[e]["fra"]
+                    es_lic, es_fra = f_dt.date() in cfg[e]["lic"], d in cfg[e]["fra"]
                     es_blo = (n_dia, t) in cfg[e]["blo"]
                     desc = not (t == TURNOS[0] and e == t_ayer)
-                    l_m = h_t[e] + hs_v <= L_M
-                    l_s = h_s[e] + hs_v <= C_S
-                    
+                    l_m, l_s = h_t[e] + hs_v <= L_M, h_s[e] + hs_v <= C_S
                     p_ok = True
                     if cfg[e]["pref"] == "Solo Mañana" and t != TURNOS[0]: p_ok = False
                     if cfg[e]["pref"] == "Solo Tarde" and t != TURNOS[1]: p_ok = False
@@ -123,10 +115,8 @@ if login():
                 cand.sort(key=lambda x: h_t[x])
                 el = cand[0] if cand else "[VACANTE]"
                 cron.append({"n": d, "Fecha": f_str, "Turno": t, "Empleado": el})
-                
                 if el != "[VACANTE]":
-                    h_t[el] += hs_v
-                    h_s[el] += hs_v
+                    h_t[el], h_s[el] = h_t[el] + hs_v, h_s[el] + hs_v
                     h_hoy.append(el)
                     if t == TURNOS[1]: t_ayer = el
                 elif t == TURNOS[1]: t_ayer = None
@@ -135,9 +125,14 @@ if login():
             df = pd.DataFrame(cron)
             df_c = df.pivot_table(index=['n', 'Fecha'], columns='Turno', values='Empleado', aggfunc='first').reset_index()
             df_c = df_c.sort_values('n').drop(columns='n')
-            
-            st.subheader(f"Vista Previa: {m_nom} {a_nro}")
             st.dataframe(df_c, use_container_width=True)
             
+            # --- LÍNEA 143 CORREGIDA ---
             p_bytes = crear_pdf(df_c, m_nom, a_nro)
-            st.download_button("📥 Descargar PDF", p
+            st.download_button(label="📥 Descargar PDF", data=p_bytes, file_name=f"Turnos_{m_nom}.pdf", mime="application/pdf")
+            
+            st.divider()
+            cols = st.columns(len(empleados))
+            for i, e in enumerate(empleados):
+                cols[i].metric(e, f"{h_t[e]} hs")
+                cols[i].progress(min(h_t[e]/L_M, 1.0))
