@@ -4,156 +4,142 @@ import calendar
 from datetime import datetime
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Sistema Privado de Turnos", layout="wide")
+st.set_page_config(page_title="Sistema Control de Turnos", layout="wide")
 
-# --- 1. FUNCIÓN DE SEGURIDAD (LOGIN) ---
+# Diccionario para traducir días
+DIAS_ES = {
+    "Monday": "Lun", "Tuesday": "Mar", "Wednesday": "Mié",
+    "Thursday": "Jue", "Friday": "Vie", "Saturday": "Sáb", "Sunday": "Dom"
+}
+
 def check_password():
-    """Devuelve True si el usuario ingresó credenciales válidas en Secrets."""
-    def password_entered():
-        if (
-            st.session_state["username"] in st.secrets["passwords"]
-            and st.session_state["password"] == st.secrets["passwords"][st.session_state["username"]]
-        ):
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]
-            del st.session_state["username"]
-        else:
-            st.session_state["password_correct"] = False
-
     if "password_correct" not in st.session_state:
         st.title("🔐 Acceso Restringido")
         st.text_input("Usuario", on_change=password_entered, key="username")
         st.text_input("Contraseña", type="password", on_change=password_entered, key="password")
         return False
-    elif not st.session_state["password_correct"]:
-        st.text_input("Usuario", on_change=password_entered, key="username")
-        st.text_input("Contraseña", type="password", on_change=password_entered, key="password")
-        st.error("❌ Credenciales incorrectas.")
-        return False
+    return st.session_state.get("password_correct", False)
+
+def password_entered():
+    if (st.session_state["username"] in st.secrets["passwords"] and 
+        st.session_state["password"] == st.secrets["passwords"][st.session_state["username"]]):
+        st.session_state["password_correct"] = True
     else:
-        return True
+        st.session_state["password_correct"] = False
 
-# --- INICIO DE LA APLICACIÓN SI EL LOGIN ES CORRECTO ---
 if check_password():
+    st.title("🗓️ Generador de Turnos - Operaciones")
     
-    st.title("🗓️ Generador de Turnos: Operaciones")
-    st.markdown("Configuración: **06-15 / 15-24** | Fines de semana **Dobles** | Máximo **160hs**")
-
-    # --- SIDEBAR: PARÁMETROS Y LICENCIAS ---
+    # --- SIDEBAR: CONFIGURACIÓN ---
     with st.sidebar:
-        st.header("⚙️ Panel de Control")
-        mes = st.selectbox("Mes a generar", range(1, 13), index=datetime.now().month - 1)
+        st.header("⚙️ Configuración")
+        mes = st.selectbox("Mes", range(1, 13), index=datetime.now().month - 1)
         anio = st.number_input("Año", value=2026)
         
-        # Nombres de tus trabajadores
-        nombres_defecto = "Acosta, Fuentes, Ricartez, Wiertz"
-        nombres_input = st.text_input("Personal (4 nombres)", nombres_defecto)
-        empleados = [e.strip() for e in nombres_input.split(",")]
-
+        empleados = ["Sánchez", "García", "Barros", "Ricartez"]
+        
         st.divider()
-        st.header("🏥 Licencias y Francos")
-        restricciones_data = {}
+        st.header("🚫 Restricciones por Persona")
+        config_per = {}
         
         for e in empleados:
-            with st.expander(f"Configurar {e}"):
-                # Licencia médica (Rango)
-                rango = st.date_input(f"Licencia Médica - {e}", value=[], key=f"lic_{e}")
-                # Días libres específicos
-                fijos = st.multiselect(f"Francos solicitados - {e}", range(1, 32), key=f"fijos_{e}")
+            with st.expander(f"Opciones de {e}"):
+                # 1. Licencia/Rango
+                rango = st.date_input(f"Licencia Médica {e}", value=[], key=f"lic_{e}")
+                # 2. Días de la semana prohibidos
+                dias_prohibidos = st.multiselect(f"No trabaja los días:", 
+                                                 ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"],
+                                                 key=f"sem_{e}")
+                # 3. Turno prohibido
+                turno_evitar = st.selectbox(f"Evitar turno:", ["Ninguno", "Mañana (06-15)", "Tarde (15-24)"], key=f"t_ev_{e}")
+                # 4. Fechas puntuales
+                francos = st.multiselect(f"Francos fijos (nro día):", range(1, 32), key=f"f_{e}")
+
+                # Procesar datos
+                fechas_lic = pd.date_range(start=rango[0], end=rango[1]).date if len(rango) == 2 else []
+                map_dias = {"Lunes": 0, "Martes": 1, "Miércoles": 2, "Jueves": 3, "Viernes": 4, "Sábado": 5, "Domingo": 6}
+                indices_dias = [map_dias[d] for d in dias_prohibidos]
                 
-                fechas_licencia = []
-                if len(rango) == 2:
-                    fechas_licencia = pd.date_range(start=rango[0], end=rango[1]).date
-                
-                restricciones_data[e] = {"licencia": fechas_licencia, "francos": fijos}
+                config_per[e] = {
+                    "licencia": fechas_lic,
+                    "dias_semana": indices_dias,
+                    "turno_bloqueado": turno_evitar,
+                    "francos_fijos": francos
+                }
 
     # --- LÓGICA DE ASIGNACIÓN ---
     num_dias = calendar.monthrange(anio, mes)[1]
     dias_mes = [datetime(anio, mes, d) for d in range(1, num_dias + 1)]
 
-    if st.button("🚀 GENERAR LISTA Y CALENDARIO"):
+    if st.button("🚀 GENERAR PLANILLA"):
         cronograma = []
         horas_acum = {e: 0 for e in empleados}
         quien_hizo_tarde_ayer = None
 
         for fecha_dt in dias_mes:
+            dia_semana_index = fecha_dt.weekday()
             dia_nro = fecha_dt.day
-            fecha_date = fecha_dt.date()
-            es_finde = fecha_dt.weekday() >= 5 # Sábado o Domingo
-            hs_valor = 18 if es_finde else 9 # Cómputo doble en finde
+            es_finde = dia_semana_index >= 5
+            hs_valor = 18 if es_finde else 9
+            nombre_dia_es = DIAS_ES[fecha_dt.strftime("%u") if False else fecha_dt.strftime("%A")]
             
-            turnos_hoy = ["Mañana (06-15)", "Tarde (15-24)"]
+            turnos = ["Mañana (06-15)", "Tarde (15-24)"]
             asignados_hoy = []
 
-            for t in turnos_hoy:
-                # Filtrar candidatos aptos
+            for t in turnos:
                 candidatos = []
                 for e in empleados:
-                    # Reglas de negocio
-                    en_licencia = fecha_date in restricciones_data[e]["licencia"]
-                    en_franco = dia_nro in restricciones_data[e]["francos"]
-                    descanso_minimo = not (t == "Mañana (06-15)" and e == quien_hizo_tarde_ayer)
-                    dentro_de_horas = (horas_acum[e] + hs_valor) <= 160
-                    ya_asignado = e in asignados_hoy
-
-                    if not en_licencia and not en_franco and descanso_minimo and dentro_de_horas and not ya_asignado:
+                    # Validaciones
+                    lic = fecha_dt.date() in config_per[e]["licencia"]
+                    dia_sem = dia_semana_index in config_per[e]["dias_semana"]
+                    turno_off = t == config_per[e]["turno_bloqueado"]
+                    franco = dia_nro in config_per[e]["francos_fijos"]
+                    descanso = not (t == "Mañana (06-15)" and e == quien_hizo_tarde_ayer)
+                    horas_ok = (horas_acum[e] + hs_valor) <= 160
+                    
+                    if not any([lic, dia_sem, turno_off, franco]) and descanso and horas_ok and e not in asignados_hoy:
                         candidatos.append(e)
 
-                # Priorizar al que tiene menos horas para que sea justo
                 candidatos.sort(key=lambda x: horas_acum[x])
 
                 if candidatos:
                     elegido = candidatos[0]
                     cronograma.append({
-                        "Día": dia_nro, 
-                        "Fecha": fecha_dt.strftime("%a %d"), 
-                        "Turno": t, 
+                        "Fecha": f"{nombre_dia_es} {dia_nro}",
+                        "Turno": t,
                         "Empleado": elegido,
-                        "Horas": hs_valor
+                        "Hs": hs_valor
                     })
                     horas_acum[elegido] += hs_valor
                     asignados_hoy.append(elegido)
                     if t == "Tarde (15-24)": quien_hizo_tarde_ayer = elegido
                 else:
                     cronograma.append({
-                        "Día": dia_nro, 
-                        "Fecha": fecha_dt.strftime("%a %d"), 
-                        "Turno": t, 
+                        "Fecha": f"{nombre_dia_es} {dia_nro}",
+                        "Turno": t,
                         "Empleado": "⚠️ VACANTE",
-                        "Horas": 0
+                        "Hs": 0
                     })
                     if t == "Tarde (15-24)": quien_hizo_tarde_ayer = None
 
-        # --- MOSTRAR RESULTADOS ---
-        df_resultados = pd.DataFrame(cronograma)
-
-        # 1. Calendario Visual
-        st.subheader("🗓️ Grilla Mensual")
-        df_cal = df_resultados.pivot(index='Fecha', columns='Turno', values='Empleado')
+        # --- RESULTADOS ---
+        df = pd.DataFrame(cronograma)
+        st.subheader("📋 Calendario de Turnos")
+        df_cal = df.pivot(index='Fecha', columns='Turno', values='Empleado')
         
-        def estilo_vacante(v):
-            return 'background-color: #ffcccc' if v == "⚠️ VACANTE" else ''
+        # Ordenar el pivot por número de día (para que no salga alfabético)
+        df_cal.index = pd.Categorical(df_cal.index, categories=df['Fecha'].unique(), ordered=True)
+        df_cal = df_cal.sort_index()
         
-        st.table(df_cal.style.applymap(estilo_vacante))
+        st.table(df_cal.style.applymap(lambda v: 'background-color: #ffcccc' if v == "⚠️ VACANTE" else ''))
 
-        # 2. Resumen de Horas
         st.divider()
-        st.subheader("📊 Control de 160 Horas Mensuales")
-        cols = st.columns(len(empleados))
+        st.subheader("📊 Cómputo de Horas")
+        cols = st.columns(4)
         for i, e in enumerate(empleados):
-            hs = horas_acum[e]
-            cols[i].metric(label=e, value=f"{hs} hs", delta=f"{160-hs} disp.")
-            cols[i].progress(min(hs/160, 1.0))
+            h = horas_acum[e]
+            cols[i].metric(e, f"{h} hs", f"{160-h} libres")
+            cols[i].progress(h/160)
 
-        # 3. Descarga para Excel
-        st.divider()
-        csv = df_resultados.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 Descargar Planilla para Excel", csv, f"turnos_{mes}_{anio}.csv", "text/csv")
-
-    else:
-        st.warning("👈 Configurá licencias en el menú lateral y dale a 'Generar'.")
-
-# --- RECORDATORIO FINAL ---
-# No olvides configurar tus usuarios y contraseñas en Streamlit Cloud:
-# [passwords]
-# "admin" = "tu_clave"
+        csv = df.to_csv(index=False).encode('utf-8-sig')
+        st.download_button("📥 Descargar Excel", csv, f"turnos_{mes}.csv", "text/csv")
