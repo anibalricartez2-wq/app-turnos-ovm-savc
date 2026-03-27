@@ -68,10 +68,9 @@ if login():
     cfg = {}
     for e in empleados:
         with st.sidebar.expander(f"👤 {e}"):
-            r = st.date_input(f"Licencia", value=[], key=f"l_{e}")
+            # Capturamos la licencia de forma segura
+            lic_input = st.date_input(f"Licencia Médica {e}", value=[], key=f"l_{e}")
             ff = st.multiselect(f"Francos fijos:", range(1, 32), key=f"f_{e}")
-            
-            # --- OPCIÓN DE PREFERENCIA DE TURNO ---
             t_pref = st.radio("Turno de trabajo:", ["Ambos", "Solo Mañana", "Solo Tarde"], key=f"pref_{e}", horizontal=True)
             
             st.write("**Bloqueos por día (No trabaja):**")
@@ -81,18 +80,45 @@ if login():
                 col = c1 if i < 4 else c2
                 if col.checkbox(f"{d_n} M", key=f"m_{e}_{d_n}"): bl.append((d_n, TURNOS[0]))
                 if col.checkbox(f"{d_n} T", key=f"t_{e}_{d_n}"): bl.append((d_n, TURNOS[1]))
-            fl = pd.date_range(start=r[0], end=r[1]).date if len(r) == 2 else []
+            
+            # LÓGICA DE FECHAS REFORZADA
+            fl = []
+            try:
+                if len(lic_input) == 2: # Solo si seleccionó inicio Y fin
+                    fl = pd.date_range(start=lic_input[0], end=lic_input[1]).date
+            except:
+                fl = [] # Si hay error (ej: solo una fecha), queda vacío
+                
             cfg[e] = {"lic": fl, "fra": ff, "blo": bl, "pref": t_pref}
 
     if st.button("🚀 GENERAR PLANILLA"):
-        n_dias = calendar.monthrange(a_nro, m_nro)[1]
-        cron, h_tot, h_sem = [], {e: 0 for e in empleados}, {e: 0 for e in empleados}
-        t_ayer, s_act = None, None
+        # Mensaje de estado para saber que el botón fue presionado
+        with st.status("Calculando turnos...", expanded=True) as status:
+            try:
+                n_dias = calendar.monthrange(a_nro, m_nro)[1]
+                cron, h_tot, h_sem = [], {e: 0 for e in empleados}, {e: 0 for e in empleados}
+                t_ayer, s_act = None, None
 
-        for d in range(1, n_dias + 1):
-            f_dt = datetime(a_nro, m_nro, d)
-            idx_s, n_dia = f_dt.weekday(), DIAS_ES[f_dt.weekday()]
-            i_sem = f_dt.isocalendar()[1]
-            if i_sem != s_act:
-                h_sem = {e: 0 for e in empleados}
-                s_act = i_sem
+                for d in range(1, n_dias + 1):
+                    f_dt = datetime(a_nro, m_nro, d)
+                    idx_s, n_dia = f_dt.weekday(), DIAS_ES[f_dt.weekday()]
+                    i_sem = f_dt.isocalendar()[1]
+                    
+                    if i_sem != s_act:
+                        h_sem = {e: 0 for e in empleados}
+                        s_act = i_sem
+                    
+                    h_v = 18 if idx_s >= 5 else 9
+                    f_s = f"{DIAS_ABR[idx_s]} {f_dt.strftime('%d/%m/%Y')}"
+                    h_asig_hoy = []
+                    
+                    for t in TURNOS:
+                        cand = []
+                        for e in empleados:
+                            # 1. Licencia
+                            es_lic = f_dt.date() in cfg[e]["lic"]
+                            # 2. Francos fijos
+                            es_fra = d in cfg[e]["fra"]
+                            # 3. Bloqueos manuales
+                            es_blo = (n_dia, t) in cfg[e]["blo"]
+                            # 4. Desc
