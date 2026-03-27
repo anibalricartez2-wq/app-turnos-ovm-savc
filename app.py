@@ -63,17 +63,15 @@ if login():
     a_nro = st.sidebar.number_input("Año", value=2026)
     
     empleados = ["Sánchez", "García", "Barros", "Ricartez"]
-    L_MENSUAL, C_SEMANAL = 160, 45 
+    L_M, C_S = 160, 45 
     
     cfg = {}
     for e in empleados:
         with st.sidebar.expander(f"👤 {e}"):
-            # Capturamos la licencia de forma segura
-            lic_input = st.date_input(f"Licencia Médica {e}", value=[], key=f"l_{e}")
+            lic_in = st.date_input(f"Licencia {e}", value=[], key=f"l_{e}")
             ff = st.multiselect(f"Francos fijos:", range(1, 32), key=f"f_{e}")
-            t_pref = st.radio("Turno de trabajo:", ["Ambos", "Solo Mañana", "Solo Tarde"], key=f"pref_{e}", horizontal=True)
+            pref = st.radio("Turno:", ["Ambos", "Solo Mañana", "Solo Tarde"], key=f"p_{e}", horizontal=True)
             
-            st.write("**Bloqueos por día (No trabaja):**")
             bl = []
             c1, c2 = st.columns(2)
             for i, d_n in enumerate(DIAS_ES):
@@ -81,44 +79,65 @@ if login():
                 if col.checkbox(f"{d_n} M", key=f"m_{e}_{d_n}"): bl.append((d_n, TURNOS[0]))
                 if col.checkbox(f"{d_n} T", key=f"t_{e}_{d_n}"): bl.append((d_n, TURNOS[1]))
             
-            # LÓGICA DE FECHAS REFORZADA
             fl = []
-            try:
-                if len(lic_input) == 2: # Solo si seleccionó inicio Y fin
-                    fl = pd.date_range(start=lic_input[0], end=lic_input[1]).date
-            except:
-                fl = [] # Si hay error (ej: solo una fecha), queda vacío
+            if len(lic_in) == 2:
+                fl = pd.date_range(start=lic_in[0], end=lic_in[1]).date
                 
-            cfg[e] = {"lic": fl, "fra": ff, "blo": bl, "pref": t_pref}
+            cfg[e] = {"lic": fl, "fra": ff, "blo": bl, "pref": pref}
 
     if st.button("🚀 GENERAR PLANILLA"):
-        # Mensaje de estado para saber que el botón fue presionado
-        with st.status("Calculando turnos...", expanded=True) as status:
-            try:
-                n_dias = calendar.monthrange(a_nro, m_nro)[1]
-                cron, h_tot, h_sem = [], {e: 0 for e in empleados}, {e: 0 for e in empleados}
-                t_ayer, s_act = None, None
+        n_d = calendar.monthrange(a_nro, m_nro)[1]
+        cron, h_t, h_s = [], {e: 0 for e in empleados}, {e: 0 for e in empleados}
+        t_ayer, s_act = None, None
 
-                for d in range(1, n_dias + 1):
-                    f_dt = datetime(a_nro, m_nro, d)
-                    idx_s, n_dia = f_dt.weekday(), DIAS_ES[f_dt.weekday()]
-                    i_sem = f_dt.isocalendar()[1]
+        for d in range(1, n_d + 1):
+            f_dt = datetime(a_nro, m_nro, d)
+            idx_s, n_dia = f_dt.weekday(), DIAS_ES[f_dt.weekday()]
+            i_sem = f_dt.isocalendar()[1]
+            
+            if i_sem != s_act:
+                h_s = {e: 0 for e in empleados}
+                s_act = i_sem
+            
+            hs_v = 18 if idx_s >= 5 else 9
+            f_str = f"{DIAS_ABR[idx_s]} {f_dt.strftime('%d/%m/%Y')}"
+            h_hoy = []
+            
+            for t in TURNOS:
+                cand = []
+                for e in empleados:
+                    es_lic = f_dt.date() in cfg[e]["lic"]
+                    es_fra = d in cfg[e]["fra"]
+                    es_blo = (n_dia, t) in cfg[e]["blo"]
+                    desc = not (t == TURNOS[0] and e == t_ayer)
+                    l_m = h_t[e] + hs_v <= L_M
+                    l_s = h_s[e] + hs_v <= C_S
                     
-                    if i_sem != s_act:
-                        h_sem = {e: 0 for e in empleados}
-                        s_act = i_sem
+                    p_ok = True
+                    if cfg[e]["pref"] == "Solo Mañana" and t != TURNOS[0]: p_ok = False
+                    if cfg[e]["pref"] == "Solo Tarde" and t != TURNOS[1]: p_ok = False
                     
-                    h_v = 18 if idx_s >= 5 else 9
-                    f_s = f"{DIAS_ABR[idx_s]} {f_dt.strftime('%d/%m/%Y')}"
-                    h_asig_hoy = []
-                    
-                    for t in TURNOS:
-                        cand = []
-                        for e in empleados:
-                            # 1. Licencia
-                            es_lic = f_dt.date() in cfg[e]["lic"]
-                            # 2. Francos fijos
-                            es_fra = d in cfg[e]["fra"]
-                            # 3. Bloqueos manuales
-                            es_blo = (n_dia, t) in cfg[e]["blo"]
-                            # 4. Desc
+                    if not any([es_lic, es_fra, es_blo]) and desc and l_m and l_s and p_ok and e not in h_hoy:
+                        cand.append(e)
+                
+                cand.sort(key=lambda x: h_t[x])
+                el = cand[0] if cand else "[VACANTE]"
+                cron.append({"n": d, "Fecha": f_str, "Turno": t, "Empleado": el})
+                
+                if el != "[VACANTE]":
+                    h_t[el] += hs_v
+                    h_s[el] += hs_v
+                    h_hoy.append(el)
+                    if t == TURNOS[1]: t_ayer = el
+                elif t == TURNOS[1]: t_ayer = None
+
+        if len(cron) > 0:
+            df = pd.DataFrame(cron)
+            df_c = df.pivot_table(index=['n', 'Fecha'], columns='Turno', values='Empleado', aggfunc='first').reset_index()
+            df_c = df_c.sort_values('n').drop(columns='n')
+            
+            st.subheader(f"Vista Previa: {m_nom} {a_nro}")
+            st.dataframe(df_c, use_container_width=True)
+            
+            p_bytes = crear_pdf(df_c, m_nom, a_nro)
+            st.download_button("📥 Descargar PDF", p
