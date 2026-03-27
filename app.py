@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit st
 import pandas as pd
 import calendar
 from datetime import datetime
@@ -53,7 +53,6 @@ def crear_pdf(df_final, mes_nombre, anio):
     fill = False
     for _, row in df_final.iterrows():
         pdf.set_fill_color(240, 240, 240)
-        # Limpieza de texto para evitar errores de codificación
         f_t = str(row['Fecha']).encode('latin-1', 'replace').decode('latin-1')
         m_t = str(row['Mañana (06-15)']).replace("⚠️ ", "").encode('latin-1', 'replace').decode('latin-1')
         t_t = str(row['Tarde (15-24)']).replace("⚠️ ", "").encode('latin-1', 'replace').decode('latin-1')
@@ -70,4 +69,13 @@ if login():
     st.sidebar.header("⚙️ Configuración")
     mes_nombre = st.sidebar.selectbox("Mes", MESES_ES, index=datetime.now().month - 1)
     mes_nro = MESES_ES.index(mes_nombre) + 1
-    anio = st.sidebar.number_input("Año", value=2026
+    anio = st.sidebar.number_input("Año", value=2026) # <-- Paréntesis cerrado
+    
+    empleados = ["Sánchez", "García", "Barros", "Ricartez"]
+    config_per = {}
+
+    for e in empleados:
+        with st.sidebar.expander(f"Restricciones {e}"):
+            rango = st.date_input(f"Licencia {e}", value=[], key=f"l_{e}")
+            dias_p = st.multiselect(f"No trabaja:", ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"], key=f"s_{e}")
+            t_ev = st.selectbox
