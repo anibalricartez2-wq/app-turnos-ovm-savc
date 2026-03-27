@@ -27,7 +27,7 @@ def login():
         return False
     return True
 
-# --- TRADUCCIONES ---
+# --- TRADUCCIONES Y CONSTANTES ---
 DIAS_ES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
 DIAS_ABR = ["Lun", "Mar", "Mie", "Jue", "Vie", "Sab", "Dom"]
 MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
@@ -81,15 +81,17 @@ if login():
     for e in empleados:
         with st.sidebar.expander(f"Restricciones {e}"):
             rango = st.date_input(f"Licencia Médica {e}", value=[], key=f"l_{e}")
-            f_fijos = st.multiselect(f"Francos fijos (Días):", range(1, 32), key=f"f_{e}")
+            f_fijos = st.multiselect(f"Francos fijos (Nro Día):", range(1, 32), key=f"f_{e}")
             
-            st.write("**Restricciones por Día y Turno:**")
+            st.write("**Bloquear Turnos Específicos:**")
             restricciones_esp = []
-            for d_nom in DIAS_ES:
-                cols_r = st.columns(2)
-                if cols_r[0].checkbox(f"{d_nom} Mañana", key=f"rm_{e}_{d_nom}"):
+            cols_r = st.columns(2)
+            for i, d_nom in enumerate(DIAS_ES):
+                # Usamos columnas alternadas para que no ocupe tanto espacio vertical
+                target_col = cols_r[0] if i < 4 else cols_r[1]
+                if target_col.checkbox(f"{d_nom} Mañana", key=f"rm_{e}_{d_nom}"):
                     restricciones_esp.append((d_nom, TURNOS[0]))
-                if cols_r[1].checkbox(f"{d_nom} Tarde", key=f"rt_{e}_{d_nom}"):
+                if target_col.checkbox(f"{d_nom} Tarde", key=f"rt_{e}_{d_nom}"):
                     restricciones_esp.append((d_nom, TURNOS[1]))
 
             fechas_l = []
@@ -99,60 +101,7 @@ if login():
             config_per[e] = {
                 "lic": fechas_l, 
                 "f_fijos": f_fijos,
-                "bloqueos_especificos": restricciones_esp
+                "bloqueos": restricciones_esp
             }
 
-    if st.button("🚀 GENERAR PLANILLA PROPORCIONAL"):
-        num_dias = calendar.monthrange(anio, mes_nro)[1]
-        cronograma = []
-        hs_totales = {e: 0 for e in empleados}
-        hs_semanales = {e: 0 for e in empleados}
-        tarde_ayer = None
-        semana_actual = None
-
-        for d in range(1, num_dias + 1):
-            f_dt = datetime(anio, mes_nro, d)
-            idx_s = f_dt.weekday() # 0=Lunes
-            nom_dia_hoy = DIAS_ES[idx_s]
-            
-            iso_semana = f_dt.isocalendar()[1]
-            if iso_semana != semana_actual:
-                hs_semanales = {e: 0 for e in empleados}
-                semana_actual = iso_semana
-
-            hs_v = 18 if idx_s >= 5 else 9
-            f_str = f"{DIAS_ABR[idx_s]} {f_dt.strftime('%d/%m/%Y')}"
-            
-            hoy_asignados = []
-            for t in TURNOS:
-                cand = []
-                for e in empleados:
-                    # 1. Licencias y Francos fijos
-                    en_lic = f_dt.date() in config_per[e]["lic"]
-                    es_franco = d in config_per[e]["f_fijos"]
-                    
-                    # 2. Restricción específica (Ej: Jueves Tarde)
-                    esta_bloqueado = (nom_dia_hoy, t) in config_per[e]["bloqueos_especificos"]
-                    
-                    # 3. Descanso mínimo (no mañana si hizo tarde ayer)
-                    descanso_ok = not (t == TURNOS[0] and e == tarde_ayer)
-                    
-                    # 4. Límites de horas
-                    tope_m = hs_totales[e] + hs_v <= LIMITE_MENSUAL
-                    tope_s = hs_semanales[e] + hs_v <= CUOTA_SEMANAL
-                    
-                    if not any([en_lic, es_franco, esta_bloqueado]) and descanso_ok and tope_m and tope_s and e not in hoy_asignados:
-                        cand.append(e)
-                
-                cand.sort(key=lambda x: hs_totales[x])
-                
-                if cand:
-                    elegido = cand[0]
-                    cronograma.append({"nro_dia": d, "Fecha": f_str, "Turno": t, "Empleado": elegido})
-                    hs_totales[elegido] += hs_v
-                    hs_semanales[elegido] += hs_v
-                    hoy_asignados.append(elegido)
-                    if t == TURNOS[1]: tarde_ayer = elegido
-                else:
-                    cronograma.append({"nro_dia": d, "Fecha": f_str, "Turno": t, "Empleado": "[VACANTE]"})
-                    if t == TURNOS[1]: tarde_ayer =
+    if st.button("🚀 GENERAR PLANILLA BALANCEADA
