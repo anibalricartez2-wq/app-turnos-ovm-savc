@@ -2,17 +2,52 @@ import streamlit as st
 import pandas as pd
 import calendar
 from datetime import datetime
+from fpdf import FPDF # Librería para el PDF
+import plotly.graph_objects as go
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Sistema Control de Turnos", layout="wide")
 
-# Diccionarios de traducción manual
 DIAS_ES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
-MESES_ES = [
-    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
-    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
-]
+MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 
+# --- FUNCIÓN PARA CREAR EL PDF ---
+def crear_pdf(df_cal, mes_nombre, anio):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    
+    # Título
+    pdf.cell(190, 10, f"CRONOGRAMA DE TURNOS - {mes_nombre.upper()} {anio}", ln=True, align="C")
+    pdf.ln(10)
+    
+    # Encabezados de tabla
+    pdf.set_font("Arial", "B", 10)
+    pdf.set_fill_color(0, 51, 102) # Azul oscuro
+    pdf.set_text_color(255, 255, 255)
+    
+    pdf.cell(50, 10, "FECHA", border=1, align="C", fill=True)
+    pdf.cell(70, 10, "MANANA (06-15)", border=1, align="C", fill=True)
+    pdf.cell(70, 10, "TARDE (15-24)", border=1, align="C", fill=True)
+    pdf.ln()
+    
+    # Contenido de la tabla
+    pdf.set_font("Arial", "", 9)
+    pdf.set_text_color(0, 0, 0)
+    
+    # Alternar colores de filas
+    fill = False
+    for index, row in df_cal.iterrows():
+        pdf.set_fill_color(240, 240, 240) if fill else pdf.set_fill_color(255, 255, 255)
+        pdf.cell(50, 8, str(row['Fecha']), border=1, align="C", fill=fill)
+        pdf.cell(70, 8, str(row['Mañana (06-15)']), border=1, align="C", fill=fill)
+        pdf.cell(70, 8, str(row['Tarde (15-24)']), border=1, align="C", fill=fill)
+        pdf.ln()
+        fill = not fill
+        
+    return pdf.output(dest='S').encode('latin-1')
+
+# --- LÓGICA DE LOGIN ---
 def check_password():
     if "password_correct" not in st.session_state:
         st.title("🔐 Acceso Restringido")
@@ -31,40 +66,30 @@ def password_entered():
 if check_password():
     st.title("🗓️ Generador de Turnos - Operaciones")
     
-    # --- SIDEBAR: CONFIGURACIÓN ---
     with st.sidebar:
         st.header("⚙️ Configuración")
         mes_nombre = st.selectbox("Seleccionar Mes", MESES_ES, index=datetime.now().month - 1)
         mes_nro = MESES_ES.index(mes_nombre) + 1
         anio = st.number_input("Año", value=2026)
-        
         empleados = ["Sánchez", "García", "Barros", "Ricartez"]
         
         st.divider()
-        st.header("🚫 Restricciones por Persona")
+        st.header("🚫 Restricciones")
         config_per = {}
-        
         for e in empleados:
             with st.expander(f"Opciones de {e}"):
                 rango = st.date_input(f"Licencia Médica {e}", value=[], key=f"lic_{e}")
-                dias_prohibidos = st.multiselect(f"No trabaja los días:", 
-                                                 ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"],
-                                                 key=f"sem_{e}")
+                dias_prohibidos = st.multiselect(f"No trabaja los días:", ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"], key=f"sem_{e}")
                 turno_evitar = st.selectbox(f"Evitar turno:", ["Ninguno", "Mañana (06-15)", "Tarde (15-24)"], key=f"t_ev_{e}")
-                francos = st.multiselect(f"Francos fijos (nro día):", range(1, 32), key=f"f_{e}")
+                francos = st.multiselect(f"Francos fijos:", range(1, 32), key=f"f_{e}")
 
                 fechas_lic = pd.date_range(start=rango[0], end=rango[1]).date if len(rango) == 2 else []
                 map_dias = {"Lunes": 0, "Martes": 1, "Miércoles": 2, "Jueves": 3, "Viernes": 4, "Sábado": 5, "Domingo": 6}
-                indices_dias = [map_dias[d] for d in dias_prohibidos]
-                
                 config_per[e] = {
-                    "licencia": fechas_lic,
-                    "dias_semana": indices_dias,
-                    "turno_bloqueado": turno_evitar,
-                    "francos_fijos": francos
+                    "licencia": fechas_lic, "dias_semana": [map_dias[d] for d in dias_prohibidos],
+                    "turno_bloqueado": turno_evitar, "francos_fijos": francos
                 }
 
-    # --- LÓGICA DE ASIGNACIÓN ---
     num_dias = calendar.monthrange(anio, mes_nro)[1]
     dias_mes = [datetime(anio, mes_nro, d) for d in range(1, num_dias + 1)]
 
@@ -78,7 +103,6 @@ if check_password():
             dia_nro = fecha_dt.day
             es_finde = idx_sem >= 5
             hs_valor = 18 if es_finde else 9
-            
             fecha_str = f"{DIAS_ES[idx_sem]} {fecha_dt.strftime('%d/%m/%Y')}"
             
             turnos = ["Mañana (06-15)", "Tarde (15-24)"]
@@ -99,49 +123,48 @@ if check_password():
                         candidatos.append(e)
 
                 candidatos.sort(key=lambda x: (horas_acum[x], x))
-
                 if candidatos:
                     elegido = candidatos[0]
-                    cronograma.append({
-                        "Fecha": fecha_str,
-                        "Turno": t,
-                        "Empleado": elegido,
-                        "Hs": hs_valor
-                    })
+                    cronograma.append({"Fecha": fecha_str, "Turno": t, "Empleado": elegido})
                     horas_acum[elegido] += hs_valor
                     asignados_hoy.append(elegido)
-                    if t == "Tarde (15-24)": 
-                        quien_hizo_tarde_ayer = elegido
+                    if t == "Tarde (15-24)": quien_hizo_tarde_ayer = elegido
                 else:
-                    cronograma.append({
-                        "Fecha": fecha_str,
-                        "Turno": t,
-                        "Empleado": "⚠️ VACANTE",
-                        "Hs": 0
-                    })
-                    if t == "Tarde (15-24)": 
-                        quien_hizo_tarde_ayer = None
+                    cronograma.append({"Fecha": fecha_str, "Turno": t, "Empleado": "⚠️ VACANTE"})
+                    if t == "Tarde (15-24)": quien_hizo_tarde_ayer = None
 
-        # --- MOSTRAR RESULTADOS ---
         if cronograma:
-            df = pd.DataFrame(cronograma)  # <--- Paréntesis cerrado correctamente
-            st.subheader(f"📋 Calendario de Turnos - {mes_nombre} {anio}")
-            
+            df = pd.DataFrame(cronograma)
             df_cal = df.pivot(index='Fecha', columns='Turno', values='Empleado')
             df_cal.index = pd.Categorical(df_cal.index, categories=df['Fecha'].unique(), ordered=True)
-            df_cal = df_cal.sort_index()
-            
+            df_cal = df_cal.sort_index().reset_index()
+
+            # --- VISTA PREVIA ---
+            st.subheader("📋 Vista Previa del Cronograma")
             st.table(df_cal.style.applymap(lambda v: 'background-color: #ffcccc' if v == "⚠️ VACANTE" else ''))
 
+            # --- BOTONES DE DESCARGA ---
             st.divider()
-            st.subheader("📊 Resumen de Horas (Tope 160hs)")
+            col_pdf, col_xls = st.columns(2)
+            
+            with col_pdf:
+                # Generar PDF
+                pdf_data = crear_pdf(df_cal, mes_nombre, anio)
+                st.download_button(
+                    label="📥 Descargar PDF para Imprimir/Enviar",
+                    data=pdf_data,
+                    file_name=f"Cronograma_{mes_nombre}_{anio}.pdf",
+                    mime="application/pdf"
+                )
+            
+            with col_xls:
+                csv = df.to_csv(index=False).encode('utf-8-sig')
+                st.download_button("📊 Descargar Excel (Respaldo)", csv, f"turnos_{mes_nombre}.csv", "text/csv")
+
+            st.divider()
+            st.subheader("📊 Resumen de Horas")
             cols = st.columns(4)
             for i, e in enumerate(empleados):
                 h = horas_acum[e]
                 cols[i].metric(e, f"{h} hs", f"{160-h} libres")
                 cols[i].progress(min(h/160, 1.0))
-
-            csv = df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 Descargar Planilla para Excel", csv, f"turnos_{mes_nombre}.csv", "text/csv")
-    else:
-        st.warning("👈 Configurá las restricciones en el menú lateral y dale a 'Generar'.")
