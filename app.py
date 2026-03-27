@@ -79,7 +79,6 @@ if check_password():
             es_finde = idx_sem >= 5
             hs_valor = 18 if es_finde else 9
             
-            # Formato: DD/MM/AAAA y Día en Español
             fecha_str = f"{DIAS_ES[idx_sem]} {fecha_dt.strftime('%d/%m/%Y')}"
             
             turnos = ["Mañana (06-15)", "Tarde (15-24)"]
@@ -88,7 +87,6 @@ if check_password():
             for t in turnos:
                 candidatos = []
                 for e in empleados:
-                    # Validaciones de restricciones
                     lic = fecha_dt.date() in config_per[e]["licencia"]
                     dia_sem = idx_sem in config_per[e]["dias_semana"]
                     turno_off = t == config_per[e]["turno_bloqueado"]
@@ -100,8 +98,7 @@ if check_password():
                     if not any([lic, dia_sem, turno_off, franco]) and descanso and horas_ok and not ya_asignado:
                         candidatos.append(e)
 
-                # Priorizar por menos horas
-                candidatos.sort(key=lambda x: horas_acum[x])
+                candidatos.sort(key=lambda x: (horas_acum[x], x))
 
                 if candidatos:
                     elegido = candidatos[0]
@@ -125,6 +122,26 @@ if check_password():
                     if t == "Tarde (15-24)": 
                         quien_hizo_tarde_ayer = None
 
-        # --- RESULTADOS ---
+        # --- MOSTRAR RESULTADOS ---
         if cronograma:
-            df = pd.DataFrame(cronograma
+            df = pd.DataFrame(cronograma)  # <--- Paréntesis cerrado correctamente
+            st.subheader(f"📋 Calendario de Turnos - {mes_nombre} {anio}")
+            
+            df_cal = df.pivot(index='Fecha', columns='Turno', values='Empleado')
+            df_cal.index = pd.Categorical(df_cal.index, categories=df['Fecha'].unique(), ordered=True)
+            df_cal = df_cal.sort_index()
+            
+            st.table(df_cal.style.applymap(lambda v: 'background-color: #ffcccc' if v == "⚠️ VACANTE" else ''))
+
+            st.divider()
+            st.subheader("📊 Resumen de Horas (Tope 160hs)")
+            cols = st.columns(4)
+            for i, e in enumerate(empleados):
+                h = horas_acum[e]
+                cols[i].metric(e, f"{h} hs", f"{160-h} libres")
+                cols[i].progress(min(h/160, 1.0))
+
+            csv = df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 Descargar Planilla para Excel", csv, f"turnos_{mes_nombre}.csv", "text/csv")
+    else:
+        st.warning("👈 Configurá las restricciones en el menú lateral y dale a 'Generar'.")
