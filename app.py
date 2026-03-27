@@ -113,21 +113,31 @@ if login():
             for t in TURNOS:
                 cand = []
                 for e in empleados:
-                    lic, fra = f_dt.date() in config_per[e]["lic"], d in config_per[e]["f_fijos"]
+                    lic = f_dt.date() in config_per[e]["lic"]
+                    fra = d in config_per[e]["f_fijos"]
                     bloq = (nom_dia, t) in config_per[e]["bloqueos"]
                     desc = not (t == TURNOS[0] and e == tarde_ayer)
-                    lim_m, lim_s = hs_tot[e] + hs_v <= LIMITE_MENSUAL, hs_sem[e] + hs_v <= CUOTA_SEMANAL
+                    lim_m = hs_tot[e] + hs_v <= LIMITE_MENSUAL
+                    lim_s = hs_sem[e] + hs_v <= CUOTA_SEMANAL
                     
                     if not any([lic, fra, bloq]) and desc and lim_m and lim_s and e not in hoy_asig:
                         cand.append(e)
                 
                 cand.sort(key=lambda x: hs_tot[x])
-                elegido = cand[0] if cand else "[VACANTE]"
-                cronograma.append({"nro": d, "Fecha": f_str, "Turno": t, "Empleado": elegido})
                 
-                if elegido != "[VACANTE]":
+                if cand:
+                    elegido = cand[0]
+                    cronograma.append({"nro": d, "Fecha": f_str, "Turno": t, "Empleado": elegido})
                     hs_tot[elegido] += hs_v
                     hs_sem[elegido] += hs_v
                     hoy_asig.append(elegido)
-                    if t == TURNOS[1]: tarde_ayer = elegido
-                elif t == TURNOS
+                    if t == TURNOS[1]: 
+                        tarde_ayer = elegido
+                else:
+                    cronograma.append({"nro": d, "Fecha": f_str, "Turno": t, "Empleado": "[VACANTE]"})
+                    if t == TURNOS[1]: 
+                        tarde_ayer = None
+
+        if cronograma:
+            df = pd.DataFrame(cronograma)
+            df_c = df.pivot_table(index=['nro', 'Fecha'], columns='Turno', values='Empleado', aggfunc
