@@ -62,8 +62,13 @@ if login():
     m_nro = MESES_ES.index(m_nom) + 1
     a_nro = st.sidebar.number_input("Año", value=2026)
     
+    st.sidebar.divider()
+    L_M = st.sidebar.number_input("Límite mensual (Hs)", value=130)
+    C_S = st.sidebar.slider("Máximo semanal (Hs)", 20, 60, 45)
+    MAX_SEG = st.sidebar.number_input("Días seguidos máx.", value=5)
+
+    # Lista actualizada de tu equipo
     empleados = ["Sánchez", "García", "Barros", "Ricartez"]
-    L_M, C_S = 160, 45 
     
     cfg = {}
     for e in empleados:
@@ -85,6 +90,7 @@ if login():
     if st.button("🚀 GENERAR PLANILLA"):
         n_d = calendar.monthrange(a_nro, m_nro)[1]
         cron, h_t, h_s = [], {e: 0 for e in empleados}, {e: 0 for e in empleados}
+        seguidos = {e: 0 for e in empleados}
         t_ayer, s_act = None, None
 
         for d in range(1, n_d + 1):
@@ -96,30 +102,51 @@ if login():
             
             hs_v = 18 if idx_s >= 5 else 9
             f_str = f"{DIAS_ABR[idx_s]} {f_dt.strftime('%d/%m/%Y')}"
-            h_hoy = []
+            
+            # --- SEGUIMIENTO DE QUIÉN TRABAJA HOY ---
+            h_hoy = [] 
             
             for t in TURNOS:
                 cand = []
                 for e in empleados:
-                    es_lic, es_fra = f_dt.date() in cfg[e]["lic"], d in cfg[e]["fra"]
+                    # REGLAS BÁSICAS
+                    es_lic = f_dt.date() in cfg[e]["lic"]
+                    es_fra = d in cfg[e]["fra"]
                     es_blo = (n_dia, t) in cfg[e]["blo"]
-                    desc = not (t == TURNOS[0] and e == t_ayer)
-                    l_m, l_s = h_t[e] + hs_v <= L_M, h_s[e] + hs_v <= C_S
+                    
+                    # REGLA DE NO DOBLAR: Si ya trabajó hoy en otro turno, queda descartado
+                    ya_trabajo_hoy = e in h_hoy
+                    
+                    # DESCANSO MÍNIMO: No mañana si hizo tarde ayer
+                    desc_min = not (t == TURNOS[0] and e == t_ayer)
+                    
+                    # LÍMITES
+                    l_m = h_t[e] + hs_v <= L_M
+                    l_s = h_s[e] + hs_v <= C_S
+                    l_seg = seguidos[e] < MAX_SEG
+                    
                     p_ok = True
                     if cfg[e]["pref"] == "Solo Mañana" and t != TURNOS[0]: p_ok = False
                     if cfg[e]["pref"] == "Solo Tarde" and t != TURNOS[1]: p_ok = False
                     
-                    if not any([es_lic, es_fra, es_blo]) and desc and l_m and l_s and p_ok and e not in h_hoy:
+                    if not any([es_lic, es_fra, es_blo, ya_trabajo_hoy]) and desc_min and l_m and l_s and l_seg and p_ok:
                         cand.append(e)
                 
                 cand.sort(key=lambda x: h_t[x])
                 el = cand[0] if cand else "[VACANTE]"
                 cron.append({"n": d, "Fecha": f_str, "Turno": t, "Empleado": el})
+                
                 if el != "[VACANTE]":
                     h_t[el], h_s[el] = h_t[el] + hs_v, h_s[el] + hs_v
-                    h_hoy.append(el)
+                    h_hoy.append(el) # Agregamos a la lista de "ya ocupados hoy"
+                    seguidos[el] += 1
                     if t == TURNOS[1]: t_ayer = el
-                elif t == TURNOS[1]: t_ayer = None
+                else:
+                    if t == TURNOS[1]: t_ayer = None
+            
+            # Reset de días seguidos para quienes descansaron hoy
+            for e in empleados:
+                if e not in h_hoy: seguidos[e] = 0
 
         if len(cron) > 0:
             df = pd.DataFrame(cron)
@@ -127,11 +154,11 @@ if login():
             df_c = df_c.sort_values('n').drop(columns='n')
             st.dataframe(df_c, use_container_width=True)
             
-            # --- LÍNEA 143 CORREGIDA ---
             p_bytes = crear_pdf(df_c, m_nom, a_nro)
             st.download_button(label="📥 Descargar PDF", data=p_bytes, file_name=f"Turnos_{m_nom}.pdf", mime="application/pdf")
             
             st.divider()
+            st.subheader(f"Carga Horaria (Máx {L_M} hs)")
             cols = st.columns(len(empleados))
             for i, e in enumerate(empleados):
                 cols[i].metric(e, f"{h_t[e]} hs")
